@@ -136,6 +136,7 @@ python main.py
 
 <img width="1366" height="663" alt="image" src="https://github.com/user-attachments/assets/89727e4c-0cdc-48df-9017-9f9495e23c02" />
 
+
 ```json
 {
   "control": "CIS 4.1",
