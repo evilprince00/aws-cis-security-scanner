@@ -254,61 +254,61 @@ def cis_ebs_encryption(aws, ec2_cache):
     return result
 
 def cis_public_ip(aws, ec2_cache):
-
-    ec2 = aws.client("ec2")
-
     result = {
         "control": "EC2 Public IP Exposure",
-        "description": "Ensure EC2 instances are not publicly exposed",
+        "description": "Identify EC2 instances with public IPs and unrestricted inbound security-group rules",
         "severity": "MEDIUM",
         "status": "PASS",
-        "non_compliant_instances": [],
+        "exposed_instances": [],
         "resource_count": 0
     }
 
     try:
         for region, instances in ec2_cache.instances.items():
-            sgs = ec2_cache.security_groups.get(region, [])
-
-            # Map SG ID → SG rules
-            sg_map = {sg["GroupId"]: sg for sg in sgs}
+            security_groups = ec2_cache.security_groups.get(region, [])
+            sg_map = {sg["GroupId"]: sg for sg in security_groups}
 
             for instance in instances:
-
                 public_ip = instance.get("PublicIpAddress")
                 if not public_ip:
                     continue
 
+                result["resource_count"] += 1
                 instance_id = instance["InstanceId"]
-                attached_sgs = instance.get("SecurityGroups", [])
+                unrestricted_rules = []
 
-                is_open = False
-
-                for sg_ref in attached_sgs:
+                for sg_ref in instance.get("SecurityGroups", []):
                     sg_id = sg_ref["GroupId"]
                     sg = sg_map.get(sg_id, {})
-
                     for rule in sg.get("IpPermissions", []):
-                        for ip in rule.get("IpRanges", []):
-                            if ip.get("CidrIp") == "0.0.0.0/0":
-                                is_open = True
+                        cidrs = [
+                            item.get("CidrIp") for item in rule.get("IpRanges", [])
+                        ] + [
+                            item.get("CidrIpv6") for item in rule.get("Ipv6Ranges", [])
+                        ]
+                        if "0.0.0.0/0" in cidrs or "::/0" in cidrs:
+                            unrestricted_rules.append({
+                                "GroupId": sg_id,
+                                "FromPort": rule.get("FromPort"),
+                                "ToPort": rule.get("ToPort"),
+                                "Protocol": rule.get("IpProtocol")
+                            })
 
+                is_open = bool(unrestricted_rules)
                 if is_open:
                     result["status"] = "FAIL"
-                    severity = "CRITICAL"
-                else:
-                    severity = "WARNING"
 
                 result["exposed_instances"].append({
                     "InstanceId": instance_id,
                     "PublicIp": public_ip,
                     "Region": region,
-                    "Exposure": "OPEN" if is_open else "LIMITED",
-                    "Severity": severity
+                    "Exposure": "UNRESTRICTED_INBOUND_RULE" if is_open else "PUBLIC_IP_PRESENT",
+                    "Severity": "HIGH" if is_open else "MEDIUM",
+                    "MatchingRules": unrestricted_rules
                 })
 
-    except Exception as e:
+    except Exception as exc:
         result["status"] = "ERROR"
-        result["error"] = str(e)
+        result["error"] = str(exc)
 
     return result
